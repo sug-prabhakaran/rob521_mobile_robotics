@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 #Standard Libraries
+from xxlimited import foo
 import numpy as np
 import yaml
 import pygame
@@ -32,7 +33,7 @@ class Node:
 
 #Path Planner 
 class PathPlanner:
-    #A path planner capable of perfomring RRT and RRT*
+    #A path planner capable of performing RRT and RRT*
     def __init__(self, map_filename, map_setings_filename, goal_point, stopping_dist):
         #Get map information
         self.occupancy_map = load_map(map_filename)
@@ -87,7 +88,7 @@ class PathPlanner:
     
     def closest_node(self, point):
         #Returns the index of the closest node
-        print("TO DO: Implement a method to get the closest node to a sapled point")
+        print("TO DO: Implement a method to get the closest node to a sampled point")
         return 0
     
     def simulate_trajectory(self, node_i, point_s):
@@ -116,14 +117,25 @@ class PathPlanner:
     def point_to_cell(self, point):
         #Convert a series of [x,y] points in the map to the indices for the corresponding cell in the occupancy map
         #point is a 2 by N matrix of points of interest
-        print("TO DO: Implement a method to get the map cell the robot is currently occupying")
-        return 0
+
+        # origin is at coordinates (21, 49.25)from the reference frame in bottom left of the map
+        # the map should be 80 x 80 from the reference point at resolution of 0.05 = 1600 x 1600 indices in np file
+        # multiply x, y coords by 20 to get indice
+        return point*20
 
     def points_to_robot_circle(self, points):
         #Convert a series of [x,y] points to robot map footprints for collision detection
         #Hint: The disk function is included to help you with this function
-        print("TO DO: Implement a method to get the pixel locations of the robot path")
-        return [], []
+        points = self.point_to_cell(points)
+        
+        pixel_radius = self.robot_radius*20         # robot radius in pixels
+        footprint = [[],[]]
+
+        for j in range(len(points[0])):
+            rr, cc = circle(points[0,j], points[1,j], pixel_radius, shape=(1600,1600))
+            footprint = np.hstack((footprint,np.vstack((rr,cc))))
+        
+        return footprint
     #Note: If you have correctly completed all previous functions, then you should be able to create a working RRT function
 
     #RRT* specific functions
@@ -210,12 +222,26 @@ def main():
     map_filename = "willowgarageworld_05res.png"
     map_setings_filename = "willowgarageworld_05res.yaml"
 
+    im_np = load_map(map_filename)
+    print('size:', np.shape(im_np))
+    #print(im_np)
+
+    point = np.array([[19.5, 20.2],
+                      [12.9, 41.3]])
+
     #robot information
     goal_point = np.array([[10], [10]]) #m
     stopping_dist = 0.5 #m
 
     #RRT precursor
     path_planner = PathPlanner(map_filename, map_setings_filename, goal_point, stopping_dist)
+
+    #result = path_planner.point_to_cell(point)
+    footprint = path_planner.points_to_robot_circle(point)
+
+    print(point)
+    print(footprint)
+
     nodes = path_planner.rrt_star_planning()
     node_path_metric = np.hstack(path_planner.recover_path())
 
