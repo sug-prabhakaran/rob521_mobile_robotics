@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 #Standard Libraries
+from importlib.resources import path
 from xxlimited import foo
 import numpy as np
 import yaml
@@ -9,6 +10,7 @@ import pygame_utils
 import matplotlib.image as mpimg
 from skimage.draw import circle
 from scipy.linalg import block_diag
+from math import dist, sin, cos, atan2
 
 #Map Handling Functions
 def load_map(filename):
@@ -57,8 +59,8 @@ class PathPlanner:
         self.stopping_dist = stopping_dist #m
 
         #Trajectory Simulation Parameters
-        self.timestep = 1.0 #s
-        self.num_substeps = 10
+        self.timestep = 2.0 #s
+        self.num_substeps = 20
 
         #Planning storage
         self.nodes = [Node(np.zeros((3,1)), -1, 0)]
@@ -69,6 +71,10 @@ class PathPlanner:
         self.gamma_RRT_star = 2 * (1 + 1/2) ** (1/2) * (self.lebesgue_free / self.zeta_d) ** (1/2)
         self.gamma_RRT = self.gamma_RRT_star + .1
         self.epsilon = 2.5
+
+        # controller parameters
+        self.prev_epsilon_h = 0.0
+        self.cumul_epsilon_h = 0.0
         
         #Pygame window for visualization
         self.window = pygame_utils.PygameWindow(
@@ -92,47 +98,182 @@ class PathPlanner:
         return 0
     
     def simulate_trajectory(self, node_i, point_s):
-        #Simulates the non-holonomic motion of the robot.
-        #This function drives the robot from node_i towards point_s. This function does has many solutions!
-        #node_i is a 3 by 1 vector [x;y;theta] this can be used to construct the SE(2) matrix T_{OI} in course notation
-        #point_s is the sampled point vector [x; y]
-        print("TO DO: Implment a method to simulate a trajectory given a sampled point")
-        vel, rot_vel = self.robot_controller(node_i, point_s)
+        print("\n-----FUNCTION STARTS------\n")
+        # Simulates the non-holonomic motion of the robot.
+        # This function drives the robot from node_i towards point_s. This function does have many solutions!
+        # node_i is a 3 by 1 vector [x;y;theta] this can be used to construct the SE(2) matrix T_{VI} in course notation
+        # point_s is the sampled point vector [x; y]
+        # inputs:  node_i     (3x1 array) - current robot wrt map frame {I}
+        #          point_s    (2x1 array) - goal point in map frame {I}
+        # outputs: robot_traj (3xN array) - series of robot poses in map frame {I}
 
-        robot_traj = self.trajectory_rollout(vel, rot_vel)
+        x, y, theta = node_i[0], node_i[1], node_i[2]         # pos., orient. of robot wrt inertial frame {I}
+        print("x, y, theta:", x, y, theta)
+
+        # node_i and point_s are expressed in inertial frame (ie. wrt frame {I}) so need a way to convert to {V}
+        C_VI = np.array([[cos(theta), sin(theta)],[-sin(theta), cos(theta)]])
+        r_IV_V = -C_VI@np.array((x, y))                             # position vector from {V} to {I} expr. in {V}
+        T_VI = np.vstack((np.hstack((C_VI, r_IV_V)), [0, 0, 1]))    # Transformation Matrix from {I} to {V}
+
+        # Simulation Algorithm
+        iter = 0
+
+        # 1. Initialize robot_traj
+        vel, rot_vel = self.robot_controller(node_i, point_s)       # initial velocities
+        print("initial vel, rot_vel", vel, rot_vel)
+        robot_traj = self.trajectory_rollout(vel, rot_vel, theta) + node_i # initial trajectory expressed in {V} frame
+        print("\ninitial robot_traj:\n", robot_traj)
+        
+        cur_node = robot_traj[:, -1].reshape(3,1)
+        dist_to_goal = np.linalg.norm(point_s - cur_node[:2])
+        print("dist_to_goal:", dist_to_goal)
+
+        while dist_to_goal > 0.5:
+            #1. calculate initial vel, rot_vel
+            print("cur_node:\n", cur_node, "\npoint_s\n", point_s)
+            vel, rot_vel = self.robot_controller(cur_node, point_s)
+            print("\niter:", iter, "- vel, rot_vel", vel, rot_vel)
+
+            #2. simulate trajectory for another  timestep and add to existing trajectory
+            step_traj = self.trajectory_rollout(vel, rot_vel, cur_node[2]) + cur_node
+            print("\nstep_traj:\n", step_traj)
+            robot_traj = np.hstack((robot_traj, step_traj))
+            #print("\nrobot_traj:\n", robot_traj)
+
+            #3. update current node and dist
+            cur_node = robot_traj[:, -1].reshape(3,1)
+            dist_to_goal = np.linalg.norm(point_s - cur_node[:2])
+            print("outside dist:", dist_to_goal)
+            print("\nupdated cur_node:\n", cur_node)
+            
+            iter += 1
+   
         return robot_traj
+
+    def normalize_angle(self, theta):
+        return atan2(sin(theta), cos(theta))
     
     def robot_controller(self, node_i, point_s):
-        #This controller determines the velocities that will nominally move the robot from node i to node s
-        #Max velocities should be enforced
-        print("TO DO: Implement a control scheme to drive you towards the sampled point")
-        return 0, 0
+        # This controller determines the velocities that will nominally move the robot from node i to node s
+        # Max velocities should be enforced
+        # inputs: node_i (3x1 array)  - current point of robot wrt robot frame {I}
+        #         point_s (2x1 array) - goal point of robot wrt robot frame {I}
+        # outputs: vel (float)        - robot velocity wrt inertial frame {I}
+        #         rot_vel (float)     - robot angular velocity wrt frame {I}
+
+        # OPTION 1: PID CONTROL
+
+        # create parameters
+        self.kP = 0.2
+        self.kI = 0.005
+        self.kD = 0.0
+
+        # calculate head error (epsilon_h): angle between desired heading (theta_d) and current theta
+        theta_d = np.arctan2((point_s[1]-node_i[1]),(point_s[0]-node_i[0])) # desired heading {I} frame
+        theta = node_i[2]                                                   # actual heading {I} frame
+        epsilon_h = np.around(self.normalize_angle(theta_d - theta),3)      # heading error
+        print("\nheading error:", epsilon_h)
+
+        # distance to goal
+        dist_to_goal = np.linalg.norm(point_s-node_i[:2])
+        print("dist to goal:", dist_to_goal)
+
+        # calculate angular velocity (rot_vel) using PID
+        if abs(epsilon_h) > 0.02:                                           # heading error is too big
+            rot_vel = np.around(self.kP*epsilon_h + self.kI*self.cumul_epsilon_h*self.timestep + \
+                  self.kD*(epsilon_h-self.prev_epsilon_h)/self.timestep,3)
+            rot_vel = min(self.rot_vel_max, rot_vel)
+            
+            # if rot_vel is really small, it skews the forward trajectory rollout so limiting it
+            if rot_vel < 0.05 and rot_vel > 0:
+                rot_vel = 0.05
+            if rot_vel < 0 and rot_vel > -0.05:
+                rot_vel = -0.05
+            vel = 0.05
+        else:
+            # if heading error is sufficiently small, use pure linear movement
+            rot_vel = 0
+            vel = np.around(self.kP*dist_to_goal, 2)
+            vel = min(self.vel_max, vel)
+
+        # update error values
+        self.prev_epsilon_h = epsilon_h                                    # previous error term for kD
+        self.cumul_epsilon_h += epsilon_h*self.timestep                    # cumulative error for kI
+
+        return vel, rot_vel
+
+        # # OPTION 2: SIMULATED TRAJECTORIES
+        # velocities = [0.2, 0.5, 0.7, 1.0, 1.4, 1.8, 2.2]
+        # rot_velocites = [-0.4, -0.3, -0.2 -0.1, 0, 0.1, 0.2, 0.3, 0.4]
+        # closest_dist = np.linalg.norm(point_s-node_i[:2])   # set closest_distance to goal to initial dist
+        # print("starting distance:", closest_dist)
+        # vel = 0.1
+        # rot_vel=0
+        # # iterate through different velocity options and simulate trajectories
+        # for i in velocities:
+        #     for j in rot_velocites:
+        #         traj = self.trajectory_rollout(i, j) + node_i   # predict trajectory at velocities i, j
+        #         end_dist = np.linalg.norm(point_s - traj[:2, -1].reshape(2,1))  # updated dist to goal
+        #         print("end pt:", traj[:2,-1])
+        #         print("step dist:", end_dist)
+        #         if end_dist < closest_dist:                 # if dist is closer, update dist, velocities
+        #             closest_dist = end_dist
+        #             vel = i
+        #             rot_vel = j
+
+        return vel, rot_vel
     
-    def trajectory_rollout(self, vel, rot_vel):
+    def trajectory_rollout(self, vel, rot_vel, theta_i):
         # Given your chosen velocities determine the trajectory of the robot for your given timestep
-        # The returned trajectory should be a series of points to check for collisions
-        print("TO DO: Implement a way to rollout the controls chosen")
-        return np.zeros((3, self.num_substeps))
+        # The returned trajectory should be a series of points in {I} frame to check for collisions
+        # inputs: vel (float)                  - robot velocity wrt inertial frame {I}
+        #         rot_vel (float)              - robot angular velocity wrt frame {I}
+        # output: self.trajectory (3x10 array) - robot pose for each time-substep expressed in {I} frame
+
+        trajectory = np.array([[],[],[]])                          # initialize array
+        t = np.array(range(self.num_substeps))/self.num_substeps
+    
+        if rot_vel == 0:
+            x_I = [np.around((vel*t*np.cos(theta_i)),2)]
+            y_I = [np.around((vel*t*np.sin(theta_i)),2)]
+            theta_I = [np.zeros(self.num_substeps)]
+        else:
+            x_I = [np.around((vel/rot_vel)*(np.sin(rot_vel*t)-np.sin(theta_i)), 2)]       # position in {V} frame
+            y_I = [np.around((vel/rot_vel)*(np.cos(theta_i)-np.cos(rot_vel*t)),2)]
+            theta_I = [np.around(rot_vel*t,2)]                          # orientation in {V}
+
+        trajectory = np.vstack((x_I, y_I, theta_I))
+        return trajectory
     
     def point_to_cell(self, point):
-        #Convert a series of [x,y] points in the map to the indices for the corresponding cell in the occupancy map
-        #point is a 2 by N matrix of points of interest
+        # Convert a series of [x,y] points in the map to the indices for the corresponding cell in the occupancy map
+        # point is a 2 by N matrix of points of interest
+        # input: point (2xN array)        - points of interest expressed in origin (map) reference frame {I}
+        # output: map_indices (2xN array) - points converted to indices wrt top left
+        
+        # convert from map reference frame {I} to bottom-left ref frame {B}
+        # position vector: r_B = r_I + r_BI = r_I - r_IB (offset vector from yaml file)
+        x_B = point[0] - self.map_settings_dict["origin"][0] 
+        y_B = point[1] - self.map_settings_dict["origin"][1]
 
-        # origin is at coordinates (21, 49.25)from the reference frame in bottom left of the map
-        # the map should be 80 x 80 from the reference point at resolution of 0.05 = 1600 x 1600 indices in np file
-        # multiply x, y coords by 20 to get indice
-        return point*20
+        # need to convert to index by dividing by resolution (*1/0.05 = *20)
+        height = self.map_shape[1]*self.map_settings_dict["resolution"]          # map height in meters
+        x_idx = (x_B/self.map_settings_dict["resolut1.79on"]).astype(int)
+        y_idx = ((height-y_B)/self.map_settings_dict["resolution"]).astype(int)  # y_B is wrt bottom left, while y_idx is wrt top left
+        map_indices = np.vstack((x_idx,y_idx))
+
+        return map_indices
 
     def points_to_robot_circle(self, points):
-        #Convert a series of [x,y] points to robot map footprints for collision detection
-        #Hint: The disk function is included to help you with this function
-        points = self.point_to_cell(points)
+        # Convert a series of [x,y] points to robot map footprints for collision detection
+        # Hint: The disk function is included to help you with this function
+        points_idx = self.point_to_cell(points)         # convert to occupancy grid indexes (pixels)
         
         pixel_radius = self.robot_radius*20         # robot radius in pixels
         footprint = [[],[]]
 
-        for j in range(len(points[0])):
-            rr, cc = circle(points[0,j], points[1,j], pixel_radius, shape=(1600,1600))
+        for j in range(len(points_idx[0])):
+            rr, cc = circle(points_idx[0,j], points_idx[1,j], pixel_radius, shape=(1600,1600))
             footprint = np.hstack((footprint,np.vstack((rr,cc))))
         
         return footprint
@@ -204,14 +345,7 @@ class PathPlanner:
             #Close node rewire
             print("TO DO: Near point rewiring")
 
-            #Check for early end
-            print("TO DO: Check for early end")
-        return self.nodes
-    
-    def recover_path(self, node_id = -1):
-        path = [self.nodes[node_id].point]
-        current_node_id = self.nodes[node_id].parent_id
-        while current_node_id > -1:
+            #Check for early end0.4
             path.append(self.nodes[current_node_id].point)
             current_node_id = self.nodes[current_node_id].parent_id
         path.reverse()
@@ -223,11 +357,8 @@ def main():
     map_setings_filename = "willowgarageworld_05res.yaml"
 
     im_np = load_map(map_filename)
-    print('size:', np.shape(im_np))
+    #print('size:', np.shape(im_np))
     #print(im_np)
-
-    point = np.array([[19.5, 20.2],
-                      [12.9, 41.3]])
 
     #robot information
     goal_point = np.array([[10], [10]]) #m
@@ -236,18 +367,74 @@ def main():
     #RRT precursor
     path_planner = PathPlanner(map_filename, map_setings_filename, goal_point, stopping_dist)
 
-    #result = path_planner.point_to_cell(point)
-    footprint = path_planner.points_to_robot_circle(point)
+    print(path_planner.bounds)
 
-    print(point)
-    print(footprint)
+    # #Task 1A test: point_to_cell function 
+    # print("Task 1A test: point_to_cell function")
+    # point = np.array([[19.5, 20.2, -10, 0],
+    #                   [12.9, 20.75, -14, 0]])
+    # print(path_planner.point_to_cell(point))
+    # for i in point.T:
+    #     path_planner.window.add_point(i, radius=2, color=(0, 0, 255))
 
-    nodes = path_planner.rrt_star_planning()
-    node_path_metric = np.hstack(path_planner.recover_path())
+    
+    # #Task 1B test: points_to_robot_circle function
+    # print("/n Task 1B test: points_to_robot_circle function")
+    # footprint = path_planner.points_to_robot_circle(point)
+    # print(footprint)
+
+    #Task 2A test: trajectory_rollout function
+    # print("\nTask 2A test: trajectory_rollout function")
+    # traj_rollout = path_planner.trajectory_rollout(8,0.4)
+    # print("trajectory_rollout:", traj_rollout)
+    # for i, val in enumerate(traj_rollout.T):
+    #     if i%2==0:
+    #         continue
+    #     path_planner.window.add_se2_pose(val, length=8, color=(0,0,255))
+
+    #Task 2B test: robot_controller function
+    # print("\nTask 2B test: robot_controller function")
+    # node_i = np.array([[0, 0, -1.57]]).T
+    # point_s = goal_point  
+    # vel, rot_vel = path_planner.robot_controller(node_i, point_s)
+    # print("final vel, rot_vel:", vel, rot_vel)
+    # best_traj = path_planner.trajectory_rollout(vel, rot_vel)
+    # print('best_traj:', best_traj)
+    # for i, val in enumerate(best_traj.T):
+    #     if i%2==0:
+    #         continue
+    #     path_planner.window.add_se2_pose(val, length=8, color=(255,0,0))
+    
+    
+    #Task 2C test: simulate_trajectory function
+    print("\nTask 2C test: simulate_trajectory function")
+    node_i = np.array([[0, 0, -0.78]]).T
+    point_s = goal_point  
+    final_trajectory = path_planner.simulate_trajectory(node_i, point_s)
+    print("Final Trajectory:", final_trajectory)
+    print("shape", np.shape(final_trajectory))
+
+
+    for i, val in enumerate(final_trajectory.T):
+        if i%10 != 0:
+            continue
+        path_planner.window.add_se2_pose(val, length=8, color=(0, 0, 255))
+    
+    path_planner.window.add_se2_pose(node_i.flatten(), length=12, color=(255, 0, 0))
+
+
+    # Ensures that pygame window does not close unless keyboard exit (CTRL+C)
+    running = True
+    while running:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+
+    #nodes = path_planner.rrt_star_planning()
+    #node_path_metric = np.hstack(path_planner.recover_path())
 
     #Leftover test functions
-    np.save("shortest_path.npy", node_path_metric)
-
+    #np.save("shortest_path.npy", node_path_metric)
 
 if __name__ == '__main__':
     main()
