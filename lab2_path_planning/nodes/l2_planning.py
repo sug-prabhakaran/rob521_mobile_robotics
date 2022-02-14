@@ -59,8 +59,8 @@ class PathPlanner:
         self.stopping_dist = stopping_dist #m
 
         #Trajectory Simulation Parameters
-        self.timestep = 2.0 #s
-        self.num_substeps = 20
+        self.timestep = 1.0 #s
+        self.num_substeps = 10
 
         #Planning storage
         self.nodes = [Node(np.zeros((3,1)), -1, 0)]
@@ -131,6 +131,7 @@ class PathPlanner:
         while dist_to_goal > 0.5:
             #1. calculate initial vel, rot_vel
             print("cur_node:\n", cur_node, "\npoint_s\n", point_s)
+            print("\ncur theta:", cur_node[2])
             vel, rot_vel = self.robot_controller(cur_node, point_s)
             print("\niter:", iter, "- vel, rot_vel", vel, rot_vel)
 
@@ -179,7 +180,13 @@ class PathPlanner:
         print("dist to goal:", dist_to_goal)
 
         # calculate angular velocity (rot_vel) using PID
-        if abs(epsilon_h) > 0.02:                                           # heading error is too big
+        if epsilon_h > 0.50:                                                # deal with really large + error
+            rot_vel = self.rot_vel_max
+            vel = 0   
+        elif epsilon_h < -0.50:                                             # deal with really large - error
+            rot_vel = -self.rot_vel_max
+            vel = 0
+        elif abs(epsilon_h) > 0.02 and abs(epsilon_h) <= 0.5:              # heading error is too big
             rot_vel = np.around(self.kP*epsilon_h + self.kI*self.cumul_epsilon_h*self.timestep + \
                   self.kD*(epsilon_h-self.prev_epsilon_h)/self.timestep,3)
             rot_vel = min(self.rot_vel_max, rot_vel)
@@ -238,8 +245,11 @@ class PathPlanner:
             y_I = [np.around((vel*t*np.sin(theta_i)),2)]
             theta_I = [np.zeros(self.num_substeps)]
         else:
-            x_I = [np.around((vel/rot_vel)*(np.sin(rot_vel*t)-np.sin(theta_i)), 2)]       # position in {V} frame
-            y_I = [np.around((vel/rot_vel)*(np.cos(theta_i)-np.cos(rot_vel*t)),2)]
+            x_I = [np.around((vel/rot_vel)*(np.sin(rot_vel*t + theta_i)-np.sin(theta_i)), 2)]       # position in {V} frame
+            y_I = [np.around((vel/rot_vel)*(np.cos(theta_i)-np.cos(rot_vel*t + theta_i)),2)]
+            print("\nx_components: vel/rot_vel", vel/rot_vel, "np.sin(rot_vel*t)", np.sin(rot_vel*t), "-np.sin(theta):", -np.sin(theta_i))
+            print("y_components: vel/rot_vel", vel/rot_vel, "np.cos(theta)", np.cos(theta_i), "-np.sin(theta):", -np.cos(rot_vel*t))
+
             theta_I = [np.around(rot_vel*t,2)]                          # orientation in {V}
 
         trajectory = np.vstack((x_I, y_I, theta_I))
@@ -361,7 +371,7 @@ def main():
     #print(im_np)
 
     #robot information
-    goal_point = np.array([[10], [10]]) #m
+    goal_point = np.array([[20], [-5]]) #m
     stopping_dist = 0.5 #m
 
     #RRT precursor
@@ -408,7 +418,7 @@ def main():
     
     #Task 2C test: simulate_trajectory function
     print("\nTask 2C test: simulate_trajectory function")
-    node_i = np.array([[0, 0, -0.78]]).T
+    node_i = np.array([[0, 0, 3.1]]).T
     point_s = goal_point  
     final_trajectory = path_planner.simulate_trajectory(node_i, point_s)
     print("Final Trajectory:", final_trajectory)
