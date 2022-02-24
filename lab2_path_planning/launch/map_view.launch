@@ -23,4 +23,5 @@
   <node pkg="tf" type="static_transform_publisher" name="odom_to_map"
     args="19.0 -9.25  0  -1.5707963 0 0  /map /odom 100" />
 
+  <param name="/use_sim_time" value="true"/>
 </launch>
