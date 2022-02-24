@@ -7,6 +7,7 @@ from scipy.linalg import block_diag
 from scipy.spatial.distance import cityblock
 import rospy
 import tf2_ros
+from l2_planning_v2 import PathPlanner                              # import functions from PathPlanner() Class
 
 # msgs
 from geometry_msgs.msg import TransformStamped, Twist, PoseStamped
@@ -31,14 +32,15 @@ MIN_TRANS_DIST_TO_USE_ROT = TRANS_GOAL_TOL  # m, robot has to be within this dis
 PATH_NAME = 'path.npy'  # saved path from l2_planning.py, should be in the same directory as this file
 
 # here are some hardcoded paths to use if you want to develop l2_planning and this file in parallel
-# TEMP_HARDCODE_PATH = [[2, 0, 0], [2.75, -1, -np.pi/2], [2.75, -4, -np.pi/2], [2, -4.4, np.pi]]  # almost collision-free
-TEMP_HARDCODE_PATH = [[2, -.5, 0], [2.4, -1, -np.pi/2], [2.45, -3.5, -np.pi/2], [1.5, -4.4, np.pi]]  # some possible collisions
+TEMP_HARDCODE_PATH = [[2, 0, 0], [2.75, -1, -np.pi/2], [2.75, -4, -np.pi/2], [2, -4.4, np.pi]]  # almost collision-free
+# TEMP_HARDCODE_PATH = [[2, -.5, 0], [2.4, -1, -np.pi/2], [2.45, -3.5, -np.pi/2], [1.5, -4.4, np.pi]]  # some possible collisions
 
 
 class PathFollower():
     def __init__(self):
         # time full path
         self.path_follow_start_time = rospy.Time.now()
+        print("Start Time:", self.path_follow_start_time)
 
         # use tf2 buffer to access transforms between existing frames in tf tree
         self.tf_buffer = tf2_ros.Buffer()
@@ -46,7 +48,8 @@ class PathFollower():
         rospy.sleep(1.0)  # time to get buffer running
 
         # constant transforms
-        self.map_odom_tf = self.tf_buffer.lookup_transform('map', 'odom', rospy.Time(0), rospy.Duration(2.0)).transform
+        print("Current Time (1):", rospy.Time.now())
+        self.map_odom_tf = self.tf_buffer.lookup_transform('map', 'odom', rospy.Time(0), rospy.Duration(4.0)).transform
 
         # subscribers and publishers
         self.cmd_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
@@ -76,6 +79,7 @@ class PathFollower():
         self.collision_marker.color.a = 0.5
 
         # transforms
+        print("Current Time (2):", rospy.Time.now())    # DEBUG
         self.map_baselink_tf = self.tf_buffer.lookup_transform('map', 'base_link', rospy.Time(0), rospy.Duration(2.0))
         self.pose_in_map_np = np.zeros(3)
         self.pos_in_map_pix = np.zeros(2)
@@ -85,10 +89,10 @@ class PathFollower():
         cur_dir = os.path.dirname(os.path.realpath(__file__))
 
         # to use the temp hardcoded paths above, switch the comment on the following two lines
-        self.path_tuples = np.load(os.path.join(cur_dir, 'path.npy')).T
-        # self.path_tuples = np.array(TEMP_HARDCODE_PATH)
+        # self.path_tuples = np.load(os.path.join(cur_dir, 'path.npy')).T
+        self.path_tuples = np.array(TEMP_HARDCODE_PATH)
 
-        self.path = utils.se2_pose_list_to_path(self.path_tuples, 'map')
+        self.path = utils.se2_pose_list_to_path(self.path_tuples, 'map')    #Path is series of geometry_msgs.msg.PoseStamped()
         self.global_path_pub.publish(self.path)
 
         # goal
@@ -97,16 +101,21 @@ class PathFollower():
 
         # trajectory rollout tools
         # self.all_opts is a Nx2 array with all N possible combinations of the t and v vels, scaled by integration dt
-        self.all_opts = np.array(np.meshgrid(TRANS_VEL_OPTS, ROT_VEL_OPTS)).T.reshape(-1, 2)
+        self.all_opts = np.around(np.array(np.meshgrid(TRANS_VEL_OPTS, ROT_VEL_OPTS)).T.reshape(-1, 2),3)
+        
 
         # if there is a [0, 0] option, remove it
         all_zeros_index = (np.abs(self.all_opts) < [0.001, 0.001]).all(axis=1).nonzero()[0]
         if all_zeros_index.size > 0:
             self.all_opts = np.delete(self.all_opts, all_zeros_index, axis=0)
         self.all_opts_scaled = self.all_opts * INTEGRATION_DT
+        
+        #UNDERSTANDING SHAPE
+        print("Options:", self.all_opts.T,  "shape:", self.all_opts.shape)
 
         self.num_opts = self.all_opts_scaled.shape[0]
         self.horizon_timesteps = int(np.ceil(CONTROL_HORIZON / INTEGRATION_DT))
+        print("Horizon Timesteps:", self.horizon_timesteps)
 
         self.rate = rospy.Rate(CONTROL_RATE)
 
@@ -116,6 +125,8 @@ class PathFollower():
     def follow_path(self):
         while not rospy.is_shutdown():
             # timing for debugging...loop time should be less than 1/CONTROL_RATE
+            print("Current Time (3):", rospy.Time.now())
+
             tic = rospy.Time.now()
 
             self.update_pose()
@@ -124,11 +135,16 @@ class PathFollower():
             # start trajectory rollout algorithm
             local_paths = np.zeros([self.horizon_timesteps + 1, self.num_opts, 3])
             local_paths[0] = np.atleast_2d(self.pose_in_map_np).repeat(self.num_opts, axis=0)
+            print("local_path shape:", local_paths.shape, "\nlocal_paths:\n", local_paths)
 
             print("TO DO: Propogate the trajectory forward, storing the resulting points in local_paths!")
-            for t in range(1, self.horizon_timesteps + 1):
-                # propogate trajectory forward, assuming perfect control of velocity and no dynamic effects
-                pass
+            for i, option in enumerate(self.all_opts):
+                print("option:", option)
+                traj = PathPlanner.trajectory_rollout(self, option[0], option[1], 
+                                                      local_paths[0,i,2], CONTROL_HORIZON, 
+                                                      self.horizon_timesteps).T
+                local_paths[:, i] = traj + local_paths[0,i].reshape(1,3)
+                print("local_path ", i,":", local_paths[:,i].T)
 
             # check all trajectory points for collisions
             # first find the closest collision point in the map to each local path point

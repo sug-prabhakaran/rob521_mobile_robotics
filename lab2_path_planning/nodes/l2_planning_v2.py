@@ -51,7 +51,7 @@ class PathPlanner:
 
         #Robot information
         self.robot_radius = 0.22 #m
-        self.vel_max = 0.5 #m/s (Feel free to change!)
+        self.vel_max = 0.26 #m/s (Feel free to change!)
         self.rot_vel_max = 0.2 #rad/s (Feel free to change!)
 
         #Goal Parameters
@@ -121,7 +121,8 @@ class PathPlanner:
         # 1. Initialize robot_traj
         vel, rot_vel = self.robot_controller(node_i, point_s)       # initial velocities
         print("initial vel, rot_vel", vel, rot_vel)
-        robot_traj = self.trajectory_rollout(vel, rot_vel, theta) + node_i # initial trajectory expressed in {V} frame
+        robot_traj = self.trajectory_rollout(vel, rot_vel, theta,
+                                             self.timestep, self.num_substeps) + node_i # initial trajectory expressed in {V} frame
         print("\ninitial robot_traj:\n", robot_traj)
         
         cur_node = robot_traj[:, -1].reshape(3,1)
@@ -136,7 +137,8 @@ class PathPlanner:
             print("\niter:", iter, "- vel, rot_vel", vel, rot_vel)
 
             #2. simulate trajectory for another  timestep and add to existing trajectory
-            step_traj = self.trajectory_rollout(vel, rot_vel, cur_node[2]) + cur_node
+            step_traj = self.trajectory_rollout(vel, rot_vel, cur_node[2], 
+                                                self.timestep, self.num_substeps) + cur_node
             print("\nstep_traj:\n", step_traj)
             robot_traj = np.hstack((robot_traj, step_traj))
             #print("\nrobot_traj:\n", robot_traj)
@@ -189,7 +191,7 @@ class PathPlanner:
 
         return vel, rot_vel
     
-    def trajectory_rollout(self, vel, rot_vel, theta_i):
+    def trajectory_rollout(self, vel, rot_vel, theta_i, timestep, num_substeps):
         # Given your chosen velocities determine the trajectory of the robot for your given timestep
         # The returned trajectory should be a series of points in {I} frame to check for collisions
         # inputs: vel (float)                  - robot velocity wrt inertial frame {I}
@@ -197,19 +199,19 @@ class PathPlanner:
         # output: self.trajectory (3x10 array) - robot pose for each time-substep expressed in {I} frame
 
         trajectory = np.array([[],[],[]])                          # initialize array
-        t = np.array(range(self.num_substeps))/self.num_substeps
+        t = np.linspace(0, timestep, num_substeps+1)
     
         if rot_vel == 0:
             x_I = [np.around((vel*t*np.cos(theta_i)),2)]
             y_I = [np.around((vel*t*np.sin(theta_i)),2)]
-            theta_I = [np.zeros(self.num_substeps)]
+            theta_I = [np.zeros(num_substeps+1)]
         else:
-            x_I = [np.around((vel/rot_vel)*(np.sin(rot_vel*t + theta_i)-np.sin(theta_i)), 2)]       # position in {V} frame
-            y_I = [np.around((vel/rot_vel)*(np.cos(theta_i)-np.cos(rot_vel*t + theta_i)),2)]
-            print("\nx_components: vel/rot_vel", vel/rot_vel, "np.sin(rot_vel*t)", np.sin(rot_vel*t), "-np.sin(theta):", -np.sin(theta_i))
-            print("y_components: vel/rot_vel", vel/rot_vel, "np.cos(theta)", np.cos(theta_i), "-np.sin(theta):", -np.cos(rot_vel*t))
+            x_I = [np.around((vel/rot_vel)*(np.sin(rot_vel*t + theta_i)-np.sin(theta_i)), 4)]       # position in {V} frame
+            y_I = [np.around((vel/rot_vel)*(np.cos(theta_i)-np.cos(rot_vel*t + theta_i)), 4)]
+            #print("\nx_components: vel/rot_vel", vel/rot_vel, "np.sin(rot_vel*t)", np.sin(rot_vel*t), "-np.sin(theta):", -np.sin(theta_i))
+            #print("y_components: vel/rot_vel", vel/rot_vel, "np.cos(theta)", np.cos(theta_i), "-np.sin(theta):", -np.cos(rot_vel*t))
 
-            theta_I = [np.around(rot_vel*t,2)]                          # orientation in {V}
+            theta_I = [np.around(rot_vel*t, 4)]                          # orientation in {V}
 
         trajectory = np.vstack((x_I, y_I, theta_I))
         return trajectory
@@ -374,15 +376,13 @@ def main():
     #         continue
     #     path_planner.window.add_se2_pose(val, length=8, color=(255,0,0))
     
-    
     #Task 2C test: simulate_trajectory function
     print("\nTask 2C test: simulate_trajectory function")
-    node_i = np.array([[0, 0, 2]]).T
+    node_i = np.array([[0, 0, 2.5]]).T
     point_s = goal_point  
     final_trajectory = path_planner.simulate_trajectory(node_i, point_s)
     print("Final Trajectory:", final_trajectory)
     print("shape", np.shape(final_trajectory))
-
 
     for i, val in enumerate(final_trajectory.T):
         if i%10 != 0:
@@ -390,7 +390,6 @@ def main():
         path_planner.window.add_se2_pose(val, length=8, color=(0, 0, 255))
     
     path_planner.window.add_se2_pose(node_i.flatten(), length=12, color=(255, 0, 0))
-
 
     # Ensures that pygame window does not close unless keyboard exit (CTRL+C)
     running = True
