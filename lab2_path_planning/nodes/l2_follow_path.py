@@ -187,8 +187,7 @@ class PathFollower():
                 desired_heading = np.around(np.arctan2((self.cur_goal[1]-self.pose_in_map_np[1]),
                                                        (self.cur_goal[0]-self.pose_in_map_np[0])), 4)
                 actual_heading = np.around(self.pose_in_map_np[2], 4)
-                heading_error = desired_heading-actual_heading
-                heading_error = np.around(atan2(sin(heading_error), cos(heading_error)), 4) # normalize
+                heading_error = np.around(self.normalize_angle(desired_heading-actual_heading), 4) # normalize
 
                 # calculate what ideal vel, rot_vel would be according to simulation
                 vel, rot_vel = PathPlanner.robot_controller(PathPlanner, self.pose_in_map_np, self.cur_goal,
@@ -197,6 +196,7 @@ class PathFollower():
                 velocity_error = np.around(abs(vel-option[0]) + 10*abs(rot_vel-option[1]), 4)
 
                 print("\n--ERROR CALCS FOR DEBUGGING--")
+                print('self.cur_goal:', self.cur_goal, 'self.pose_in_map:', self.pose_in_map_np) 
                 print("heading error calc - desired:", desired_heading, "actual:", actual_heading, "error:", heading_error)
                 print("vel error calc - desired:", vel, rot_vel, "actual:", option, "error:", velocity_error)
                 final_cost[i] = velocity_error + heading_error
@@ -259,6 +259,9 @@ class PathFollower():
     def stop_robot_on_shutdown(self):
         self.cmd_pub.publish(Twist())
         rospy.loginfo("Published zero vel on shutdown.")
+
+    def normalize_angle(self, theta):
+        return atan2(sin(theta), cos(theta))
 
 
 if __name__ == '__main__':

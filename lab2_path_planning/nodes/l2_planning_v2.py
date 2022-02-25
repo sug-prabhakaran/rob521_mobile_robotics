@@ -155,6 +155,9 @@ class PathPlanner:
    
         return robot_traj
     
+    def normalize_angle(self, theta):
+        return atan2(sin(theta),cos(theta))
+
     def robot_controller(self, node_i, point_s, max_vel, kP, kD, delta_t):
         # This controller determines the velocities that will nominally move the robot from node i to node s
         # Max velocities should be enforced
@@ -168,8 +171,7 @@ class PathPlanner:
         # calculate head error: angle b/w desired (theta_d) and actual headings (theta)
         theta_d = np.arctan2((point_s[1]-node_i[1]),(point_s[0]-node_i[0])) # desired heading {I} frame
         theta = node_i[2]                                                   # actual heading {I} frame
-        err_head = theta_d - theta                                          # heading error
-        err_head = np.around(atan2(sin(err_head), cos(err_head)),3)         # normalized heading error
+        err_head = np.around(self.normalize_angle(theta_d-theta),3)         # normalized heading error
 
         rot_vel = np.round(kP*(err_head) + kD*(err_head-self.prev_err_head)/(delta_t), 2)
         print("rot_vel:", rot_vel)
