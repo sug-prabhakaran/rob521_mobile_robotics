@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 #Standard Libraries
 from importlib.resources import path
+from pathlib import Path
 from xxlimited import foo
 import numpy as np
 import yaml
@@ -73,8 +74,9 @@ class PathPlanner:
         self.epsilon = 2.5
 
         # controller parameters
-        self.prev_error_head = 0.0
-        self.cumul_error_head = 0.0
+        self.kP = 1.0
+        self.kD = 0.1
+        self.prev_err_head = 0.0
         
         #Pygame window for visualization
         self.window = pygame_utils.PygameWindow(
@@ -119,7 +121,7 @@ class PathPlanner:
         iter = 0
 
         # 1. Initialize robot_traj
-        vel, rot_vel = self.robot_controller(node_i, point_s)       # initial velocities
+        vel, rot_vel = self.robot_controller(node_i, point_s, self.vel_max, self.kP, self.kD, self.timestep) # initial velocities
         print("initial vel, rot_vel", vel, rot_vel)
         robot_traj = self.trajectory_rollout(vel, rot_vel, theta,
                                              self.timestep, self.num_substeps) + node_i # initial trajectory expressed in {V} frame
@@ -133,7 +135,7 @@ class PathPlanner:
             #1. calculate initial vel, rot_vel
             print("cur_node:\n", cur_node, "\npoint_s\n", point_s)
             print("\ncur theta:", cur_node[2])
-            vel, rot_vel = self.robot_controller(cur_node, point_s)
+            vel, rot_vel = self.robot_controller(cur_node, point_s, self.vel_max, self.kP, self.kD, self.timestep)
             print("\niter:", iter, "- vel, rot_vel", vel, rot_vel)
 
             #2. simulate trajectory for another  timestep and add to existing trajectory
@@ -152,11 +154,8 @@ class PathPlanner:
             iter += 1
    
         return robot_traj
-
-    def normalize_angle(self, theta):
-        return atan2(sin(theta), cos(theta))
     
-    def robot_controller(self, node_i, point_s):
+    def robot_controller(self, node_i, point_s, max_vel, kP, kD, delta_t):
         # This controller determines the velocities that will nominally move the robot from node i to node s
         # Max velocities should be enforced
         # inputs: node_i (3x1 array)  - current point of robot wrt robot frame {I}
@@ -166,28 +165,25 @@ class PathPlanner:
 
         # OPTION 1: PID CONTROL
 
-        # control gain parameters
-        self.kP = 1.0
-        self.kI = 0.0
-        self.kD = 0.1
-
         # calculate head error: angle b/w desired (theta_d) and actual headings (theta)
         theta_d = np.arctan2((point_s[1]-node_i[1]),(point_s[0]-node_i[0])) # desired heading {I} frame
         theta = node_i[2]                                                   # actual heading {I} frame
-        error_heading = np.around(self.normalize_angle(theta_d - theta),3)  # heading error
+        err_head = theta_d - theta                                          # heading error
+        err_head = np.around(atan2(sin(err_head), cos(err_head)),3)         # normalized heading error
 
-        rot_vel = np.round(self.kP*(error_heading) + self.kD*(error_heading-self.prev_error_head)/(self.timestep), 2)
+        rot_vel = np.round(kP*(err_head) + kD*(err_head-self.prev_err_head)/(delta_t), 2)
+        print("rot_vel:", rot_vel)
 
-        if rot_vel > self.rot_vel_max:
-            rot_vel = self.rot_vel_max
-        if rot_vel < -self.rot_vel_max:
-            rot_vel = -self.rot_vel_max
+        if rot_vel > max_vel:
+            rot_vel = max_vel
+        if rot_vel < -max_vel:
+            rot_vel = -max_vel
 
-        vel = np.around(self.vel_max/(100*abs(rot_vel)+1),2)
-
+        vel = np.around(max_vel/(6*abs(rot_vel)+1),2)
+        print("vel:", vel)
         # update controller error values
-        self.prev_error_head = error_heading                                    # previous error term for kD
-        # self.cumul_error_head += error_heading*self.timestep                    # cumulative error for kI
+        self.prev_err_head = err_head                                       # previous error term for kD
+        # self.cumul_error_head += error_heading*self.timestep              # cumulative error for kI
 
         return vel, rot_vel
     

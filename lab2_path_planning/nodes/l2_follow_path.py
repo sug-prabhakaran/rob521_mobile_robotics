@@ -8,6 +8,7 @@ from scipy.spatial.distance import cityblock
 import rospy
 import tf2_ros
 from l2_planning_v2 import PathPlanner                              # import functions from PathPlanner() Class
+from math import sin, cos, atan2
 
 # msgs
 from geometry_msgs.msg import TransformStamped, Twist, PoseStamped
@@ -49,7 +50,7 @@ class PathFollower():
 
         # constant transforms
         print("Current Time (1):", rospy.Time.now())
-        self.map_odom_tf = self.tf_buffer.lookup_transform('map', 'odom', rospy.Time(0), rospy.Duration(4.0)).transform
+        self.map_odom_tf = self.tf_buffer.lookup_transform('map', 'odom', rospy.Time(0), rospy.Duration(2.0)).transform
 
         # subscribers and publishers
         self.cmd_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
@@ -79,7 +80,6 @@ class PathFollower():
         self.collision_marker.color.a = 0.5
 
         # transforms
-        print("Current Time (2):", rospy.Time.now())    # DEBUG
         self.map_baselink_tf = self.tf_buffer.lookup_transform('map', 'base_link', rospy.Time(0), rospy.Duration(2.0))
         self.pose_in_map_np = np.zeros(3)
         self.pos_in_map_pix = np.zeros(2)
@@ -92,7 +92,8 @@ class PathFollower():
         # self.path_tuples = np.load(os.path.join(cur_dir, 'path.npy')).T
         self.path_tuples = np.array(TEMP_HARDCODE_PATH)
 
-        self.path = utils.se2_pose_list_to_path(self.path_tuples, 'map')    #Path is series of geometry_msgs.msg.PoseStamped()
+        #Path is series of geometry_msgs.msg.PoseStamped()
+        self.path = utils.se2_pose_list_to_path(self.path_tuples, 'map')
         self.global_path_pub.publish(self.path)
 
         # goal
@@ -100,6 +101,9 @@ class PathFollower():
         self.cur_path_index = 0
 
         # trajectory rollout tools
+        self.kP = 1
+        self.kD = 0
+        self.prev_err_head = 0
         # self.all_opts is a Nx2 array with all N possible combinations of the t and v vels, scaled by integration dt
         self.all_opts = np.around(np.array(np.meshgrid(TRANS_VEL_OPTS, ROT_VEL_OPTS)).T.reshape(-1, 2),3)
         
@@ -110,12 +114,10 @@ class PathFollower():
             self.all_opts = np.delete(self.all_opts, all_zeros_index, axis=0)
         self.all_opts_scaled = self.all_opts * INTEGRATION_DT
         
-        #UNDERSTANDING SHAPE
-        print("Options:", self.all_opts.T,  "shape:", self.all_opts.shape)
-
         self.num_opts = self.all_opts_scaled.shape[0]
         self.horizon_timesteps = int(np.ceil(CONTROL_HORIZON / INTEGRATION_DT))
-        print("Horizon Timesteps:", self.horizon_timesteps)
+        self.iteration = 1
+        #print("Horizon Timesteps:", self.horizon_timesteps)
 
         self.rate = rospy.Rate(CONTROL_RATE)
 
@@ -125,34 +127,44 @@ class PathFollower():
     def follow_path(self):
         while not rospy.is_shutdown():
             # timing for debugging...loop time should be less than 1/CONTROL_RATE
-            print("Current Time (3):", rospy.Time.now())
+            print(self.iteration, ": Current Time:", rospy.Time.now())      # time stored as Time/Duration, not float
 
             tic = rospy.Time.now()
 
             self.update_pose()
             self.check_and_update_goal()
 
-            # start trajectory rollout algorithm
+            # PART1: start trajectory rollout algorithm
+            
+            # initialize 3D vector local_path to store trajectory data (200 time steps) X 43 options X pose: [x, y, theta] 
             local_paths = np.zeros([self.horizon_timesteps + 1, self.num_opts, 3])
             local_paths[0] = np.atleast_2d(self.pose_in_map_np).repeat(self.num_opts, axis=0)
-            print("local_path shape:", local_paths.shape, "\nlocal_paths:\n", local_paths)
 
-            print("TO DO: Propogate the trajectory forward, storing the resulting points in local_paths!")
+            # iterate through 43 options and store projected trajectory for each in local path
             for i, option in enumerate(self.all_opts):
-                print("option:", option)
-                traj = PathPlanner.trajectory_rollout(self, option[0], option[1], 
+                traj = PathPlanner.trajectory_rollout(PathPlanner, option[0], option[1], 
                                                       local_paths[0,i,2], CONTROL_HORIZON, 
                                                       self.horizon_timesteps).T
-                local_paths[:, i] = traj + local_paths[0,i].reshape(1,3)
-                print("local_path ", i,":", local_paths[:,i].T)
+                local_paths[:, i] = np.around(traj + local_paths[0,i].reshape(1,3),4)            
 
-            # check all trajectory points for collisions
+            # PART2: check all trajectory points for collisions
+            
             # first find the closest collision point in the map to each local path point
             local_paths_pixels = (self.map_origin[:2] + local_paths[:, :, :2]) / self.map_resolution
             valid_opts = range(self.num_opts)
             local_paths_lowest_collision_dist = np.ones(self.num_opts) * 50
 
             print("TO DO: Check the points in local_path_pixels for collisions")
+            '''COLLISION CHECKING PSEUDOCODE
+            1. Use self.map_non_zero_idxes, filters only pts < 20 pixels away from our current location
+                    (a) uses np.linalg.norm( difference between map_non_zero_idx and current loc in pixels)
+                    (b) note*** the indexes for pos_in_np_pixels are reversed.
+            2. Iterate through 43 options:
+                Check for collisons for all points on path
+                If collision, remove option from options   
+            3. For each path, calculate distance to closest obstacle.
+            '''
+
             for opt in range(local_paths_pixels.shape[1]):
                 for timestep in range(local_paths_pixels.shape[0]):
                     pass
@@ -160,30 +172,65 @@ class PathFollower():
             # remove trajectories that were deemed to have collisions
             print("TO DO: Remove trajectories with collisions!")
 
-            # calculate final cost and choose best option
-            print("TO DO: Calculate the final cost and choose the best control option!")
-            final_cost = np.zeros(self.num_opts)
+            # PART3: calculate final cost and choose best option
+            print("\n----CONTROL CALCULATIONS----\n")
+
+            # initialize parameters
+            self.delta_time = (rospy.Time.now() - tic).to_sec()         # time for one iteration of while loop
+            print("delta_t:", self.delta_time)
+            final_cost = np.zeros(self.num_opts)                        # initialize final_cost array [1 x 43]
+    
+            # iterate through 43 options and calculate heading error, velocity error for each
+            for i, option in enumerate(self.all_opts):
+                PathPlanner.prev_err_head = 0                           # required for robot_controller function
+                # heading error between angle from point to goal and actual pose
+                desired_heading = np.around(np.arctan2((self.cur_goal[1]-self.pose_in_map_np[1]),
+                                                       (self.cur_goal[0]-self.pose_in_map_np[0])), 4)
+                actual_heading = np.around(self.pose_in_map_np[2], 4)
+                heading_error = desired_heading-actual_heading
+                heading_error = np.around(atan2(sin(heading_error), cos(heading_error)), 4) # normalize
+
+                # calculate what ideal vel, rot_vel would be according to simulation
+                vel, rot_vel = PathPlanner.robot_controller(PathPlanner, self.pose_in_map_np, self.cur_goal,
+                                                            TRANS_VEL_OPTS[-1], self.kP, self.kD, self.delta_time)
+                
+                velocity_error = np.around(abs(vel-option[0]) + 10*abs(rot_vel-option[1]), 4)
+
+                print("\n--ERROR CALCS FOR DEBUGGING--")
+                print("heading error calc - desired:", desired_heading, "actual:", actual_heading, "error:", heading_error)
+                print("vel error calc - desired:", vel, rot_vel, "actual:", option, "error:", velocity_error)
+                final_cost[i] = velocity_error + heading_error
+
+            print("final_cost:", final_cost)
+
             if final_cost.size == 0:  # hardcoded recovery if all options have collision
                 control = [-.1, 0]
             else:
                 best_opt = valid_opts[final_cost.argmin()]
                 control = self.all_opts[best_opt]
+                print("best_opt:", final_cost.argmin(), best_opt)
                 self.local_path_pub.publish(utils.se2_pose_list_to_path(local_paths[:, best_opt], 'map'))
+            print("CONTROL INPUT:", control)
 
             # send command to robot
             self.cmd_pub.publish(utils.unicyle_vel_to_twist(control))
 
             # uncomment out for debugging if necessary
-            # print("Selected control: {control}, Loop time: {time}, Max time: {max_time}".format(
-            #     control=control, time=(rospy.Time.now() - tic).to_sec(), max_time=1/CONTROL_RATE))
+            #print("Selected control: {control}, Loop time: {time}, Max time: {max_time}".format(
+            #    control=control, time=(rospy.Time.now() - tic).to_sec(), max_time=1/CONTROL_RATE))
 
             self.rate.sleep()
+            self.iteration +=1
+
+            # if self.iteration > 3:
+            #     break
 
     def update_pose(self):
         # Update numpy poses with current pose using the tf_buffer
         self.map_baselink_tf = self.tf_buffer.lookup_transform('map', 'base_link', rospy.Time(0)).transform
         self.pose_in_map_np[:] = [self.map_baselink_tf.translation.x, self.map_baselink_tf.translation.y,
                                   utils.euler_from_ros_quat(self.map_baselink_tf.rotation)[2]]
+        print("Current Robot POSE:", self.pose_in_map_np)
         self.pos_in_map_pix = (self.map_origin[:2] + self.pose_in_map_np[:2]) / self.map_resolution
         self.collision_marker.header.stamp = rospy.Time.now()
         self.collision_marker.pose = utils.pose_from_se2_pose(self.pose_in_map_np)

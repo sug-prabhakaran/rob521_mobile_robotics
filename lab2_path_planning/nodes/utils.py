@@ -42,14 +42,15 @@ def convert_tf_to_pose(tf):
 
 def euler_from_ros_quat(q):
     # get the SXYZ euler angles from a ros XYZW quaternion
-    np_q = np.array([q.x, q.y, q.z, q.w])
+    np_q = np.array([q.w, q.x, q.y, q.z])
     #return tf_conversions.transformations.euler_from_quaternion(np_q)
-    return euler.quat2euler(np_q)
+    eulers = euler.quat2euler(np_q, axes='sxyz')
+    return eulers
 
 def ros_quat_from_euler(e):
     # get a ROS XYZW quaternion from an SXYZ euler
     #np_q = tf_conversions.transformations.quaternion_from_euler(*e)
-    np_q = euler.euler2quat(*e)
+    np_q = euler.euler2quat(*e)     # form [w, x, y, z] need in form [x, y, z, w]
     return ros_q_from_np_q(np_q) 
 
 def np_q_from_ros_q(q):
@@ -59,7 +60,7 @@ def np_q_from_ros_q(q):
 
 def ros_q_from_np_q(np_q):
     q = Quaternion()
-    q.x = np_q[0]; q.y = np_q[1]; q.z = np_q[2]; q.w = np_q[3]
+    q.x = np_q[1]; q.y = np_q[2]; q.z = np_q[3]; q.w = np_q[0]
     return q
 
 
