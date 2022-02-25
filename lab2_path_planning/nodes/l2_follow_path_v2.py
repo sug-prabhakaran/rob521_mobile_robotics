@@ -21,7 +21,7 @@ import utils
 
 TRANS_GOAL_TOL = .25  # m, tolerance to consider a goal complete
 ROT_GOAL_TOL = .3  # rad, tolerance to consider a goal complete
-TRANS_VEL_OPTS = [0, 0.025, 0.13, 0.26]  # m/s, max of real robot is .26
+TRANS_VEL_OPTS = [0, 0.025, 0.13, 0.20, 0.26]  # m/s, max of real robot is .26
 ROT_VEL_OPTS = np.linspace(-1.82, 1.82, 11)  # rad/s, max of real robot is 1.82
 CONTROL_RATE = 5  # Hz, how frequently control signals are sent
 CONTROL_HORIZON = 5  # seconds. if this is set too high and INTEGRATION_DT is too low, code will take a long time to run!
