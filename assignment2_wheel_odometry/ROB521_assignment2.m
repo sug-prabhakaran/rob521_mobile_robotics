@@ -90,7 +90,7 @@ clf;
 
 subplot(2,2,1);
 hold on;
-plot(x_true,y_true,'b');
+plot(x_true,y_true,'b', 'LineWidth',2);
 plot(x_odom, y_odom, 'r');
 legend('true', 'odom');
 xlabel('x [m]');
@@ -100,7 +100,7 @@ axis equal;
 
 subplot(2,2,2);
 hold on;
-plot(t_true,theta_true,'b');
+plot(t_true,theta_true,'b','LineWidth',2);
 plot(t_odom,theta_odom,'r');
 legend('true', 'odom');
 xlabel('t [s]');
@@ -161,7 +161,7 @@ hold on;
 % loop over random trials
 for n=1:100
     
-    % add noise to wheel odometry measurements (yes, on purpose to see effect)
+    % add noise to wheel odometry measurements (on purpose to see effect)
     v_odom = v_odom_noisefree + 0.2*randn(numodom,1);
     omega_odom = omega_odom_noisefree + 0.04*randn(numodom,1);
     
@@ -241,38 +241,38 @@ for n=1:2
         x_interp = interp1(t_interp,x_true,t_laser);
         y_interp = interp1(t_interp,y_true,t_laser);
         theta_interp = interp1(t_interp,theta_true,t_laser);
-        omega_interp = interp1(t_interp,omega_odom,t_laser);
-    end   
+        omega_interp = interp1(t_interp,omega_odom_noisefree,t_laser);
+    end
 
-    % loop over laser scans
+    % loop over laser scan for each of 989 timesteps
     for i=1:size(t_laser,1)
 
         % ------insert your point transformation algorithm here------
         
+        % Rotation of laser pts from laser frame {L} to veh frame {V}
+        x_veh = y_laser(i, :).*cos_angles - 0.1; %0.1 offset for {V} origin
+        y_veh = y_laser(i, :).*sin_angles;
 
+        % Transformation Matrix from {V} to {I}
+        T_iv = [cos(theta_interp(i)), -sin(theta_interp(i)), x_interp(i);
+                sin(theta_interp(i)), cos(theta_interp(i)), y_interp(i);
+                0, 0, 1];
+
+        % Transform laser pts from {V} to inertial frame {I}
+        [pose_i] = T_iv * [x_veh; y_veh; ones(1, size(x_veh, 2))];
         
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
+        % Only plot if angular velocity < 0.1 rad/s
+        if abs(omega_interp(i)) < 0.1 
+            % plot noise-free laser scan data in blue
+            if n==2
+                scatter(pose_i(1,:), pose_i(2, :),2, 'b');
+            % plot noisy laser scan data in red
+            else
+                scatter(pose_i(1,:), pose_i(2, :),2, 'r');
+            end
+        else
+            continue
+        end
         % ------end of your point transformation algorithm-------
     end
 end
