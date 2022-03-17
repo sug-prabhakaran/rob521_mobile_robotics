@@ -225,6 +225,7 @@ npoints = size(y_laser,2);
 angles = linspace(phi_min_laser, phi_max_laser,npoints);
 cos_angles = cos(angles);
 sin_angles = sin(angles);
+y_laser = y_laser-0.1; %0.1 offset for laser to robot origin
 
 for n=1:2
     
@@ -250,7 +251,7 @@ for n=1:2
         % ------insert your point transformation algorithm here------
         
         % Rotation of laser pts from laser frame {L} to veh frame {V}
-        x_veh = y_laser(i, :).*cos_angles - 0.1; %0.1 offset for {V} origin
+        x_veh = y_laser(i, :).*cos_angles; 
         y_veh = y_laser(i, :).*sin_angles;
 
         % Transformation Matrix from {V} to {I}
