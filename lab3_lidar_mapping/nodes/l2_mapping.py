@@ -47,6 +47,7 @@ class OccupancyGripMap:
         self.base_link_scan_tf = self.tf_buffer.lookup_transform('base_link', 'base_scan', rospy.Time(0),
                                                             rospy.Duration(2.0))
         odom_tf = self.tf_buffer.lookup_transform('odom', 'base_link', rospy.Time(0), rospy.Duration(2.0)).transform
+        print("odom_tf:\n", odom_tf)
 
         # set origin to center of map
         rob_to_mid_origin_tf_mat = np.eye(4)
@@ -69,6 +70,7 @@ class OccupancyGripMap:
 
     def scan_cb(self, scan_msg):
         # read new laser data and populate map
+        print('scan_msg.ranges[0:9]:\n',scan_msg.ranges[0:9])
         # get current odometry robot pose
         try:
             odom_tf = self.tf_buffer.lookup_transform('odom', 'base_scan', rospy.Time(0)).transform
@@ -77,22 +79,27 @@ class OccupancyGripMap:
             odom_tf = convert_pose_to_tf(self.map_msg.info.origin)
 
         # get odom in frame of map
-        odom_map_tf = tf_mat_to_tf(
-            np.linalg.inv(tf_to_tf_mat(convert_pose_to_tf(self.map_msg.info.origin))).dot(tf_to_tf_mat(odom_tf))
-        )
+        odom_map_tf = tf_mat_to_tf(np.linalg.inv(
+                tf_to_tf_mat(convert_pose_to_tf(self.map_msg.info.origin))).dot(tf_to_tf_mat(odom_tf))
+                )
         odom_map = np.zeros(3)
         odom_map[0] = odom_map_tf.translation.x
         odom_map[1] = odom_map_tf.translation.y
         odom_map[2] = euler_from_ros_quat(odom_map_tf.rotation)[2]
+        print("odom_map:", odom_map)
 
-        # loop through all range measurements
-
-        # YOUR CODE HERE!!! Loop through each measurement in scan_msg to get the correct angle and
+        # loop through each range measurement in scan_msg to get the correct angle and
         # x_start and y_start to send to your ray_trace_update function.
+        num_scans = len(scan_msg.ranges)                # number of measurements
+        print("num_scans:", num_scans)
+        for i in range(num_scans):
+            dist = scan_msg.ranges[i]                   # in base-link frame - x-coord
 
-
-
-
+            point = tf_to_tf_mat(odom_map_tf).dot([dist, 0, 0, 1])
+            theta = odom_map[2] - i*scan_msg.angle_increment
+            print("point (x, y, theta): ", point[:2], theta)
+            if i == 9:
+                break
 
         # publish the message
         self.map_msg.info.map_load_time = rospy.Time.now()

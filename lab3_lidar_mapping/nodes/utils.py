@@ -51,8 +51,7 @@ def tf_to_tf_mat(tf):
     #mat = tf_conversions.transformations.quaternion_matrix(np_q_from_ros_q(tf.rotation))
     mat = quaternions.quat2mat(np_q_from_ros_q(tf.rotation))
     mat = np.hstack((mat, [[tf.translation.x], [tf.translation.y], [tf.translation.z]]))
-    print("final tf_mat:\n", mat)
-
+    mat = np.vstack((mat, [0, 0, 0, 1]))
     return mat
 
 def tf_mat_to_tf(tf_mat):
