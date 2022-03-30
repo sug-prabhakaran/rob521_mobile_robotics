@@ -5,7 +5,7 @@ import numpy as np
 import rospy
 import tf2_ros
 from skimage.draw import line as ray_trace
-from math import sin, cos, atan2, exp
+import math
 
 # msgs
 from nav_msgs.msg import OccupancyGrid, MapMetaData
@@ -16,9 +16,10 @@ from utils import convert_pose_to_tf, convert_tf_to_pose, euler_from_ros_quat, \
      tf_to_tf_mat, tf_mat_to_tf
 
 
-ALPHA = 1
+ALPHA = 4
 BETA = 1
-MAP_DIM = (4, 4)
+# MAP_DIM = (4, 4)
+MAP_DIM = (6, 6)
 CELL_SIZE = .01
 NUM_PTS_OBSTACLE = 3
 SCAN_DOWNSAMPLE = 1
@@ -78,33 +79,34 @@ class OccupancyGripMap:
             odom_tf = convert_pose_to_tf(self.map_msg.info.origin)
 
         # get odom in frame of map
-        odom_map_tf = tf_mat_to_tf(np.linalg.inv(
-                tf_to_tf_mat(convert_pose_to_tf(self.map_msg.info.origin))).dot(tf_to_tf_mat(odom_tf))
-                )
+        odom_map_tf = tf_mat_to_tf(
+            np.linalg.inv(tf_to_tf_mat(convert_pose_to_tf(self.map_msg.info.origin))).dot(tf_to_tf_mat(odom_tf))
+        )
         odom_map = np.zeros(3)
         odom_map[0] = odom_map_tf.translation.x
         odom_map[1] = odom_map_tf.translation.y
         odom_map[2] = euler_from_ros_quat(odom_map_tf.rotation)[2]
-        print("odom_map:", odom_map)
+        print('Robot position: ', odom_map[0], odom_map[1])
+        # loop through all range measurements
 
-        # loop through each range measurement in scan_msg to get the correct angle and
-        # x_start and y_start to send to your ray_trace_update function.
-        num_scans = len(scan_msg.ranges)                # number of measurements (= 360)
+        # YOUR CODE HERE!!! Loop through each measurement in scan_msg to get the correct angle and
+        # # x_start and y_start to send to your ray_trace_update function.
+        for i in range(len(scan_msg.ranges)):
+            if scan_msg.ranges[i]<scan_msg.range_max and scan_msg.ranges[i]>scan_msg.range_min:
+                cur_angle = odom_map[2] + (scan_msg.angle_min + i*scan_msg.angle_increment)
+                cur_range = scan_msg.ranges[i]
 
-        for i in range(num_scans):
-            print("scan_msg.angle_min:", scan_msg.angle_min, scan_msg.angle_max)
-            angle = self.normalize_angle(odom_map[2] - i*scan_msg.angle_increment)
-            try:
-                self.ray_trace_update(self.np_map, self.log_odds, odom_map[0], odom_map[1], angle, scan_msg.ranges[i])
-            except IndexError:
-                break
+                self.ray_trace_update(odom_map[0], odom_map[1], cur_angle, cur_range)
+
+            # break
 
         # publish the message
         self.map_msg.info.map_load_time = rospy.Time.now()
         self.map_msg.data = self.np_map.flatten()
         self.map_pub.publish(self.map_msg)
 
-    def ray_trace_update(self, map, log_odds, x_start, y_start, angle, range_mes):
+    # def ray_trace_update(self, map, log_odds, x_start, y_start, angle, range_mes):
+    def ray_trace_update(self, x_start, y_start, angle, range_mes):
         """
         A ray tracing grid update as described in the lab document.
 
@@ -120,42 +122,39 @@ class OccupancyGripMap:
         # YOUR CODE HERE!!! You should modify the log_odds object and the numpy map based on the outputs from
         # ray_trace and the equations from class. Your numpy map must be an array of int8s with 0 to 100 representing
         # probability of occupancy, and -1 representing unknown.
-
-        x_start_pixel = int(x_start/self.map_msg.info.resolution - 1)
-        y_start_pixel = int(abs(y_start)/self.map_msg.info.resolution - 1)
-        range_mes_pixel = int(range_mes/self.map_msg.info.resolution)
         
-        x_end = x_start + range_mes*cos(angle)
-        y_end = abs(y_start) + range_mes*sin(angle)
-        x_end_pixel = int(x_end/self.map_msg.info.resolution - 1)
-        y_end_pixel = int(y_end/self.map_msg.info.resolution - 1)
-    
-        print("x, y, range pixels:", x_start_pixel, y_start_pixel, range_mes_pixel, x_end_pixel, y_end_pixel)
-        rr, cc = ray_trace(y_start_pixel,x_start_pixel, y_end_pixel, x_end_pixel)
+        # obstacle position in the inertial reference frame
+        obs_x = max(0,x_start + range_mes*math.cos(angle))
+        obs_y = max(0,y_start + range_mes*math.sin(angle)) 
+        # obs_x = x_start + range_mes*math.cos(angle)
+        # obs_y = y_start + range_mes*math.sin(angle)
 
-        size = len(rr)
-        print("size:", size)
+        tot_points = int(MAP_DIM[0] / CELL_SIZE)-1    # = 399
 
-        for i in range(size):
-            if i < size - NUM_PTS_OBSTACLE:
-                log_odds[rr[i],cc[i]] -= BETA
-                #print("i (ALPHA): ", i, log_odds[rr[i], cc[i]])
-            else:
-                log_odds[rr[i],cc[i]] += ALPHA
-                #print("i (BETA): ", i, log_odds[rr[i], cc[i]])
+        if True:
+            # mapping the coordinates to from bottom-left axis
+            x_start_px = tot_points-int((x_start)*100)
+            y_start_px = tot_points-int((y_start)*100)                  
+            obs_x_px   = tot_points-int((obs_x)*100)
+            obs_y_px   = tot_points-int((obs_y)*100)
 
-        map = (100*self.log_odds_to_probability(log_odds)).astype(int)
-        print(log_odds[rr, cc])
-        print(map[rr, cc])
+            points_x, points_y = ray_trace(x_start_px, y_start_px, obs_x_px, obs_y_px)
 
-        return map, log_odds
+            for i in range(len(points_x)-NUM_PTS_OBSTACLE):
+                self.log_odds[points_y[i], tot_points-points_x[i]] -=1
+
+            obs_points = -1
+            for i in range(NUM_PTS_OBSTACLE):
+                self.log_odds[points_y[obs_points], tot_points-points_x[obs_points]] += 1
+                obs_points -= 1
+            
+            self.np_map = self.log_odds_to_probability(self.log_odds)*100
+
+        # return map, log_odds
 
     def log_odds_to_probability(self, values):
         # print(values)
         return np.exp(values) / (1 + np.exp(values))
-
-    def normalize_angle(self, theta):
-        return atan2(sin(theta),cos(theta))
 
 
 if __name__ == '__main__':
