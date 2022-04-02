@@ -58,7 +58,7 @@ ogymax = 6;                     % maximum y value
 ognx = (ogxmax-ogxmin)/ogres;   % number of cells in x direction
 ogny = (ogymax-ogymin)/ogres;   % number of cells in y direction
 oglo = zeros(ogny,ognx);        % occupancy grid in log-odds format
-ogp = ones(ogny,ognx);          % occupancy grid in probability format
+ogp = 0.5ones(ogny,ognx);          % occupancy grid in probability format
 
 % precalculate some quantities
 numodom = size(t_odom,1);
@@ -77,7 +77,7 @@ omega_interp = interp1(t_interp,omega_odom,t_laser);
 %% 
 
 % set up the plotting/movie recording
-vid = VideoWriter('ass3_q1.avi');
+vid = VideoWriter('ass2_q1.avi');
 open(vid);
 figure(1);
 clf;
@@ -90,7 +90,7 @@ M = getframe;
 writeVideo(vid,M);
 
 % loop over laser scans (every fifth)
-for t=1:5:989 %:size(t_laser,1)
+for t=1:20:989 %:size(t_laser,1)
     
     % convert current pose coords to pixels
     [x_pixel, y_pixel] = DistToPixel(x_interp(t), y_interp(t));
@@ -125,13 +125,13 @@ for t=1:5:989 %:size(t_laser,1)
             end
                 
             % update probability array from log-odd data
-            %ogp(y_idxs(j),x_idxs(j)) = ProbFromLogOdds( ...
-            %    oglo(y_idxs(j),x_idxs(j)));
+            ogp(y_idxs(j),x_idxs(j)) = ProbFromLogOdds( ...
+                oglo(y_idxs(j),x_idxs(j)));
         end
     end
 
     % Update probability array from log-odd array
-    ogp = ProbFromLogOdds(oglo);
+    %ogp = ProbFromLogOdds(oglo);
 
     
     % ------end of your occupancy grid mapping algorithm-------
@@ -164,7 +164,7 @@ for t=1:5:989 %:size(t_laser,1)
 end
 
 close(vid);
-print -dpng ass3_q1.png
+print -dpng ass2_q1.png
 
 save occmap.mat ogres ogxmin ogxmax ogymin ogymax ognx ogny oglo ogp;
 
