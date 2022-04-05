@@ -58,7 +58,7 @@ ogymax = 6;                     % maximum y value
 ognx = (ogxmax-ogxmin)/ogres;   % number of cells in x direction
 ogny = (ogymax-ogymin)/ogres;   % number of cells in y direction
 oglo = zeros(ogny,ognx);        % occupancy grid in log-odds format
-ogp = ones(ogny,ognx);          % occupancy grid in probability format
+ogp = zeros(ogny,ognx);         % occupancy grid in probability format
 
 % precalculate some quantities
 numodom = size(t_odom,1);
@@ -74,8 +74,6 @@ y_interp = interp1(t_interp,y_true,t_laser);
 theta_interp = interp1(t_interp,theta_true,t_laser);
 omega_interp = interp1(t_interp,omega_odom,t_laser);
 
-%% 
-
 % set up the plotting/movie recording
 vid = VideoWriter('ass3_q1.avi');
 open(vid);
@@ -85,7 +83,7 @@ pcolor(ogp);
 colormap(1-gray);
 shading('flat');
 axis equal;
-axis on;
+axis off;
 M = getframe;
 writeVideo(vid,M);
 
@@ -116,12 +114,12 @@ for t=1:5:989 %:size(t_laser,1)
                 continue
             end 
             % update log-odds
-            if j < (size(x_idxs) - 1)
+            if j < (size(x_idxs,2))
                 % all cells except last cell are set as free
-                oglo(y_idxs(j),x_idxs(j)) = oglo(y_idxs(j),x_idxs(j)) + 1;
+                oglo(y_idxs(j),x_idxs(j)) = oglo(y_idxs(j),x_idxs(j)) - 0.55;
             else
                 % last cell is set as occupied
-                oglo(y_idxs(j),x_idxs(j)) = oglo(y_idxs(j),x_idxs(j)) - 1;
+                oglo(y_idxs(j),x_idxs(j)) = oglo(y_idxs(j),x_idxs(j)) + 2;
             end
                 
             % update probability array from log-odd data
@@ -142,7 +140,7 @@ for t=1:5:989 %:size(t_laser,1)
     colormap(1-gray);
     shading('flat');
     axis equal;
-    axis on;
+    axis off;
     
     % draw the robot
     hold on;
@@ -164,7 +162,7 @@ for t=1:5:989 %:size(t_laser,1)
 end
 
 close(vid);
-print -dpng ass3_q1.png
+%print -dpng ass3_q1.png
 
-save occmap.mat ogres ogxmin ogxmax ogymin ogymax ognx ogny oglo ogp;
+%save occmap.mat ogres ogxmin ogxmax ogymin ogymax ognx ogny oglo ogp;
 
