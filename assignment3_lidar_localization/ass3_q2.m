@@ -74,7 +74,7 @@ t_interp = linspace(t_true(1),t_true(numodom),numodom);
 x_interp = interp1(t_interp,x_true,t_laser);
 y_interp = interp1(t_interp,y_true,t_laser);
 theta_interp = interp1(t_interp,theta_true,t_laser);
-omega_interp = interp1(t_interp,omega_odom,t_laser);
+%omega_interp = interp1(t_interp,omega_odom,t_laser);
 
 % interpolate the wheel odometry at the laser timestamps and
 % add noise to measurements (yes, on purpose to see effect)
@@ -84,18 +84,18 @@ omega_interp = interp1(t_interp,omega_odom,t_laser) + 0.04*randn(size(t_laser,1)
 % add noise to the laser range measurements (yes, on purpose to see effect)
 % and precompute some quantities useful to the laser
 y_laser = y_laser + 0.1*randn(size(y_laser));
-npoints = size(y_laser,2);
-angles = linspace(phi_min_laser, phi_max_laser,npoints);
+npoints = size(y_laser,2);                              % 640 laser scans
+angles = linspace(phi_min_laser, phi_max_laser,npoints);% 640 angles
 dx = ogres*cos(angles);
 dy = ogres*sin(angles);
-y_laser_max = 5;   % don't use laser measurements beyond this distance
+y_laser_max = 5;        % don't use laser measurements beyond this distance
 
 % particle filter tuning parameters (yours may be different)
 nparticles = 200;       % number of particles
 v_noise = 0.2;          % noise on longitudinal speed for propagating particle
 u_noise = 0.2;          % noise on lateral speed for propagating particle
 omega_noise = 0.04;     % noise on rotational speed for propagating particle
-laser_var = 0.5^2;      % variance on laser range distribution
+laser_var = 0.5^2;      % variance on laser range distribution (R)
 w_gain = 10*sqrt( 2 * pi * laser_var );     % gain on particle weight
 
 % generate an initial cloud of particles
@@ -114,7 +114,7 @@ pf_err(1) = 0;
 wo_err(1) = 0;
 
 % set up the plotting/movie recording
-vid = VideoWriter('ass2_q2.avi');
+vid = VideoWriter('ass3_q2.avi');
 open(vid);
 figure(2);
 clf;
@@ -132,20 +132,20 @@ set(plot( (mean(x_particle)-ogxmin)/ogres, (mean(y_particle)-ogymin)/ogres, 'g.'
 colormap(1-gray);
 shading('flat');
 axis equal;
-axis off;
+axis on;
 M = getframe;
 writeVideo(vid,M);
 
-% loop over laser scans
+% loop over 989 time-steps (each one has a laser scan)
 for i=2:size(t_laser,1)
-        
     % update the wheel-odometry-only algorithm
-    dt = t_laser(i) - t_laser(i-1);
-    v = v_interp(i);
-    omega = omega_interp(i);
+    dt = t_laser(i) - t_laser(i-1);                % time-step
+    v = v_interp(i);                               % noisy input velocity
+    omega = omega_interp(i);                       % noisy input ang. vel.
     x_odom_only = x_odom_only + dt*v*cos( theta_odom_only );
     y_odom_only = y_odom_only + dt*v*sin( theta_odom_only );
     phi = theta_odom_only + dt*omega;
+    % normalize phi angle between -pi < phi < pi
     while phi > pi
         phi = phi - 2*pi;
     end
@@ -153,19 +153,21 @@ for i=2:size(t_laser,1)
         phi = phi + 2*pi;
     end 
     theta_odom_only = phi;
-    
-    % loop over the particles
+    w_particle = ones(nparticles, 1);
+    % loop over the particles (N = 200 particles)
     for n=1:nparticles
-
         % propagate the particle forward in time using wheel odometry
         % (remember to add some unique noise to each particle so they
         % spread out over time)
         v = v_interp(i) + v_noise*randn(1);
         u = u_noise*randn(1);
         omega = omega_interp(i) + omega_noise*randn(1);
-        x_particle(n) = x_particle(n) + dt*(v*cos( theta_particle(n) ) - u*sin( theta_particle(n) ));
-        y_particle(n) = y_particle(n) + dt*(v*sin( theta_particle(n) ) + u*cos( theta_particle(n) ));
+        x_particle(n) = x_particle(n) + dt*(v*cos( theta_particle(n) ) ...
+            - u*sin( theta_particle(n) ));
+        y_particle(n) = y_particle(n) + dt*(v*sin( theta_particle(n) ) ...
+            + u*cos( theta_particle(n) ));
         phi = theta_particle(n) + dt*omega;
+
         while phi > pi
             phi = phi - 2*pi;
         end
@@ -174,69 +176,32 @@ for i=2:size(t_laser,1)
         end 
         theta_particle(n) = phi;
 
-        % pose of particle in initial frame
+        % pose of particle in inertial frame
         T = [cos(theta_particle(n)) -sin(theta_particle(n)) x_particle(n); ...
              sin(theta_particle(n))  cos(theta_particle(n)) y_particle(n); ...
                      0                     0                 1];    
-    
+
         % compute the weight for each particle using only 2 laser rays 
         % (right=beam 1 and left=beam 640)
-        w_particle(n) = 1.0;     
-        for beam=1:2         
-         
-            % we will only use the first and last laser ray for
-            % localization
-            if beam==1  % rightmost beam
-                j = 1;
-            elseif beam==2  % leftmost beam
-                j = 640;
+        %w_particle(n) = 1.0;     
+        for beam = 1:2
+            if beam == 1
+                j = 1;      % far-right beam
+            else
+                j = 640;    % far-left beam
             end
-            
+
             % ------insert your particle filter weight calculation here ------
 
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            % ------end of your particle filter weight calculation-------
+            %get predicted range: y_laser_pred
+            [y_laser_pred] = PredictRange(x_particle(n), y_particle(n), ...
+                theta_particle(n), angles(j), ogp);
+
+            %calculate weight
+            w_particle(n) = w_particle(n)*w_gain*normpdf(y_laser_pred, ...
+                y_laser(i, j), laser_var);
+
+        % ------end of your particle filter weight calculation-------
         end
         
     end    
@@ -276,10 +241,10 @@ for i=2:size(t_laser,1)
     x = (x_interp(i)-ogxmin)/ogres;
     y = (y_interp(i)-ogymin)/ogres;
     th = theta_interp(i);
-    if ~isnan(y_laser(i,1)) & y_laser(i,1) <= y_laser_max
+    if ~isnan(y_laser(i,1)) && y_laser(i,1) <= y_laser_max
        set(plot([x x+y_laser(i,1)/ogres*cos(th+angles(1))]', [y y+y_laser(i,1)/ogres*sin(th+angles(1))]', 'm-'),'LineWidth',1);
     end
-    if ~isnan(y_laser(i,640)) & y_laser(i,640) <= y_laser_max
+    if ~isnan(y_laser(i,640)) && y_laser(i,640) <= y_laser_max
        set(plot([x x+y_laser(i,640)/ogres*cos(th+angles(640))]', [y y+y_laser(i,640)/ogres*sin(th+angles(640))]', 'm-'),'LineWidth',1);
     end
     r = 0.15/ogres;
@@ -289,7 +254,7 @@ for i=2:size(t_laser,1)
     colormap(1-gray);
     shading('flat');
     axis equal;
-    axis off;
+    axis on;
     
     % save the video frame
     M = getframe;
@@ -311,7 +276,7 @@ xlabel('t [s]');
 ylabel('error [m]');
 legend('particle filter', 'odom', 'Location', 'NorthWest');
 title('error (estimate-true)');
-print -dpng ass2_q2.png
+print -dpng ass3_q2.png
 
 
 
