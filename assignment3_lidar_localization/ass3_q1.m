@@ -83,7 +83,7 @@ pcolor(ogp);
 colormap(1-gray);
 shading('flat');
 axis equal;
-axis off;
+axis on;
 M = getframe;
 writeVideo(vid,M);
 
@@ -140,7 +140,7 @@ for t=1:5:989 %:size(t_laser,1)
     colormap(1-gray);
     shading('flat');
     axis equal;
-    axis off;
+    axis on;
     
     % draw the robot
     hold on;
@@ -162,7 +162,7 @@ for t=1:5:989 %:size(t_laser,1)
 end
 
 close(vid);
-%print -dpng ass3_q1.png
+print -dpng ass3_q1.png
 
 %save occmap.mat ogres ogxmin ogxmax ogymin ogymax ognx ogny oglo ogp;
 
