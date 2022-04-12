@@ -196,10 +196,15 @@ for i=2:size(t_laser,1)
             %get predicted range: y_laser_pred
             [y_laser_pred] = PredictRange(x_particle(n), y_particle(n), ...
                 theta_particle(n), angles(j), ogp);
+            
+            %discard laser readings that are above the max or that are NaN
+            if y_laser(i, j) > y_laser_max || isnan(y_laser(i,j))
+                continue
+            end
 
-            %calculate weight
-            w_particle(n) = w_particle(n)*w_gain*normpdf(y_laser_pred, ...
-                y_laser(i, j), laser_var);
+            % calculate weight using gaussian pdf function
+            w_particle(n) = w_particle(n)*w_gain*normpdf(y_laser(i, j), ...
+                y_laser_pred, sqrt(laser_var));
 
         % ------end of your particle filter weight calculation-------
         end
@@ -277,8 +282,3 @@ ylabel('error [m]');
 legend('particle filter', 'odom', 'Location', 'NorthWest');
 title('error (estimate-true)');
 print -dpng ass3_q2.png
-
-
-
-
-
